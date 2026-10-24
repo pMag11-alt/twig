@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Tests (unit + side-by-side with git, including an HTTPS clone from GitHub)
+        run: cargo test
+        env:
+          TWIG_NETWORK_TESTS: "1"
+
+  self-host:
+    name: twig clones twig
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - name: Clone this repository with twig and let git verify it
+        run: |
+          ./target/release/twig clone https://github.com/${{ github.repository }} /tmp/self
+          cd /tmp/self
+          git fsck --strict
+          test -z "$(git status --porcelain)"
+          diff <(git log --format=%H) <("$GITHUB_WORKSPACE/target/release/twig" log --format=%H)
+          "$GITHUB_WORKSPACE/target/release/twig" status
